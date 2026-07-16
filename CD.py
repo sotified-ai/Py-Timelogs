@@ -31,28 +31,25 @@ def load_data(folder_path):
             df.columns = df.columns.str.strip()
             df['Start Log Date'] = pd.to_datetime(df['Start Log Date'])
             
-            # We no longer strictly need the old 'Activities' column since we parse it from Task Description
-            relevant_cols = ['Project Name', 'Time Log User', 'Time Spend', 'Start Log Date', 'Task Description']
+            # Include Activities from the source file — it already has the correct values
+            relevant_cols = ['Project Name', 'Time Log User', 'Time Spend', 'Start Log Date', 'Task Description', 'Activities']
             existing_cols = [c for c in relevant_cols if c in df.columns]
             
             df = df[existing_cols].dropna(subset=['Time Spend', 'Start Log Date'])
             
-            # --- PARSING TASK DESCRIPTION ---
+            # --- MODULE: parse from Task Description (split on '_') ---
             if 'Task Description' in df.columns:
-                # Split by the first underscore
                 splits = df['Task Description'].astype(str).str.split('_', n=1, expand=True)
-                
-                # Assign the first part to Module
+                # Module = part before '_'; if no '_', use full Task Description
                 df['Module'] = splits[0].str.strip()
-                
-                # Assign the second part to Activities. If no underscore existed, fallback to 'General'
-                if splits.shape[1] > 1:
-                    df['Activities'] = splits[1].str.strip().fillna('General')
-                else:
-                    df['Activities'] = 'General'
             else:
                 df['Module'] = 'Unknown'
-                df['Activities'] = 'Unknown'
+
+            # --- ACTIVITIES: use the column from the file if present, else 'General' ---
+            if 'Activities' not in df.columns:
+                df['Activities'] = 'General'
+            else:
+                df['Activities'] = df['Activities'].astype(str).str.strip().replace('nan', 'General').fillna('General')
 
             all_data.append(df)
         except Exception as e:
