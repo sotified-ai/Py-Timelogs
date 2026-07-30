@@ -23,11 +23,17 @@ SOURCE_FOLDER = r'D:\Code-Projects\Code-Projects\Timesheet\project-file'
 
 # --- API DOWNLOAD CONFIGURATION ---
 # Add more project ids here to pull additional projects' reports.
-PROJECT_IDS = ["21127"]
+PROJECT_IDS = ["21127", "19429","19236","19503","18949","19537","18950","18943","22020","20315"]
 
 TASK_LISTING_URL = "https://apiss.kualitee.com/api/v2/task/listing"
 API_ORIGIN = "https://kualitatem_pmo.kualitee.com"
 API_TOKEN_ENV_VAR = "KUALITEE_API_TOKEN"
+
+# --- LOGIN CONFIGURATION ---
+# Local credentials table: username, password, role (admin/lead), project
+# (blank for admin, exact 'Project Name' match for lead). Edit this file
+# directly to add/remove leads or change passwords — no restart needed.
+USERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'users.csv')
 
 # Fixed request shape captured from the portal's own export call — the
 # server uses the "columns" list to know what to put in the export, so it
@@ -76,6 +82,183 @@ def _parse_assigned_users(value):
     return [u.strip() for u in str(value).split(',') if u.strip()]
 
 
+def load_users():
+    """Read the local credentials table fresh on every call (not cached) so
+    an admin editing users.csv takes effect without restarting the app."""
+    if not os.path.exists(USERS_FILE):
+        return pd.DataFrame(columns=['username', 'password', 'role', 'project'])
+    users = pd.read_csv(USERS_FILE, dtype=str).fillna('')
+    users.columns = users.columns.str.strip()
+    return users
+
+
+def check_credentials(username, password):
+    """Return {'username', 'role', 'project'} on a match, else None.
+    'project' is None for admin (full access) or the single project name a
+    lead is scoped to."""
+    users = load_users()
+    match = users[(users['username'] == username) & (users['password'] == password)]
+    if match.empty:
+        return None
+    row = match.iloc[0]
+    role = row['role'].strip().lower()
+    return {
+        'username': row['username'].strip(),
+        'role': role,
+        'project': row['project'].strip() if role != 'admin' else None,
+    }
+
+
+def render_login_page():
+    """Full-screen glassmorphic login page: animated aurora gradient
+    background, floating blurred blobs for depth, a frosted-glass card, and
+    restyled inputs/button/alert — built entirely from real Streamlit
+    widgets (form/text_input/button) so functionality is untouched; only
+    their containers are re-skinned via CSS targeting data-testid hooks."""
+    st.markdown("""
+    <style>
+      [data-testid="stSidebar"] { display: none; }
+      header[data-testid="stHeader"] { display: none !important; }
+
+      [data-testid="stAppViewContainer"] {
+        background: linear-gradient(135deg, #0f0c29, #302b63, #1a2980, #26d0ce, #24243e);
+        background-size: 400% 400%;
+        animation: auroraShift 18s ease infinite;
+      }
+      @keyframes auroraShift {
+        0%   { background-position: 0% 50%; }
+        50%  { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+      }
+
+      .login-blob {
+        position: fixed; border-radius: 50%; filter: blur(70px);
+        z-index: 0; pointer-events: none;
+      }
+      .login-blob-a { top: 8%; left: 6%; width: 320px; height: 320px;
+        background: radial-gradient(circle, rgba(38,208,206,0.35), transparent 70%); }
+      .login-blob-b { bottom: 6%; right: 8%; width: 360px; height: 360px;
+        background: radial-gradient(circle, rgba(255,255,255,0.18), transparent 70%); }
+
+      .login-header { text-align: center; margin: 4vh auto 4px; position: relative; z-index: 1; }
+      .login-badge {
+        width: 64px; height: 64px; margin: 0 auto 16px; border-radius: 50%;
+        background: linear-gradient(135deg, #26d0ce, #1a2980);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 28px; box-shadow: 0 8px 24px rgba(38,208,206,0.4);
+        animation: fadeInUp 0.5s ease-out;
+      }
+      .login-header h1 {
+        color: #fff; font-size: 1.5rem; margin: 0; font-weight: 700;
+        animation: fadeInUp 0.6s ease-out;
+      }
+      .login-header p {
+        color: rgba(255,255,255,0.65); font-size: 0.9rem; margin-top: 6px;
+        animation: fadeInUp 0.7s ease-out;
+      }
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(20px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+
+      div[data-testid="stForm"] {
+        background: rgba(255,255,255,0.08);
+        backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 24px; padding: 36px 32px 24px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+        max-width: 400px; margin: 12px auto 0; position: relative; z-index: 1;
+        animation: fadeInUp 0.6s ease-out;
+      }
+      div[data-testid="stForm"] label p {
+        color: rgba(255,255,255,0.85) !important; font-weight: 500; font-size: 0.85rem;
+      }
+      /* Frosted light chips for the inputs — kept opaque-ish so text stays
+         readable regardless of how bright the aurora backdrop is at that
+         point in its animation (a translucent dark overlay would wash out). */
+      div[data-testid="stTextInputRootElement"] {
+        background: rgba(255,255,255,0.92) !important;
+        border: 1px solid rgba(255,255,255,0.6) !important;
+        border-radius: 10px !important;
+        transition: box-shadow 0.15s ease;
+      }
+      div[data-testid="stTextInputRootElement"]:focus-within {
+        box-shadow: 0 0 0 3px rgba(38,208,206,0.5);
+      }
+      div[data-testid="stTextInput"] input {
+        background: transparent !important; color: #16213e !important;
+      }
+      div[data-testid="stTextInput"] input::placeholder { color: rgba(22,33,62,0.4) !important; }
+      /* The show/hide-password toggle lives inside the same input wrapper —
+         reset it explicitly so it doesn't inherit the submit button's look. */
+      div[data-testid="stTextInputRootElement"] button {
+        background: transparent !important; border: none !important;
+        box-shadow: none !important; width: auto !important;
+      }
+
+      div[data-testid="stElementContainer"]:has(div[data-testid="stFormSubmitButton"]) {
+        width: 100% !important;
+      }
+      div[data-testid="stFormSubmitButton"] button {
+        width: 100%; background: linear-gradient(135deg, #26d0ce, #1a2980) !important;
+        border: none !important; border-radius: 10px !important;
+        font-weight: 600 !important; padding: 10px 0 !important;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+      div[data-testid="stFormSubmitButton"] button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(38,208,206,0.45);
+      }
+      div[data-testid="stFormSubmitButton"] button p { color: #fff !important; }
+
+      div[data-testid="stAlert"] {
+        max-width: 400px; margin: 14px auto 0 !important;
+        position: relative; z-index: 1;
+      }
+      div[data-testid="stAlertContainer"] {
+        background: rgba(255,240,240,0.95) !important;
+        border: 1px solid rgba(220,38,38,0.35) !important;
+        border-radius: 12px !important;
+      }
+      div[data-testid="stAlertContainer"] p { color: #b91c1c !important; }
+      div[data-testid="stAlertContainer"] svg { fill: #dc2626 !important; }
+      .login-footer {
+        text-align: center; color: rgba(255,255,255,0.4); font-size: 0.75rem;
+        margin-top: 18px; position: relative; z-index: 1;
+      }
+    </style>
+    <div class="login-blob login-blob-a"></div>
+    <div class="login-blob login-blob-b"></div>
+    <div class="login-header">
+      <div class="login-badge">📊</div>
+      <h1>Team Timesheet Dashboard</h1>
+      <p>Sign in to view your project's productivity insights</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.form("login_form"):
+        login_username = st.text_input("Username", placeholder="Enter your username")
+        login_password = st.text_input("Password", type="password", placeholder="Enter your password")
+        login_submitted = st.form_submit_button("Sign In")
+
+    if login_submitted:
+        user = check_credentials(login_username, login_password)
+        if user is None:
+            st.error("Invalid username or password.")
+        else:
+            st.session_state.authenticated = True
+            st.session_state.username = user['username']
+            st.session_state.role = user['role']
+            st.session_state.project = user['project']
+            st.rerun()
+
+    st.markdown(
+        '<div class="login-footer">Kualitatem PMO · Local Access Only'
+        '<br>Created by Farrukh Tuheed Khan</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def clear_downloaded_reports(folder_path):
     """Delete previously downloaded *.xlsx/*.csv directly in folder_path
     (not subfolders, e.g. 'old data') so re-downloading doesn't leave stale
@@ -89,7 +272,11 @@ def clear_downloaded_reports(folder_path):
 def download_reports_from_api(project_ids, token, folder_path):
     """For each project id: ask task/listing to build an export, then
     download the resulting file link into folder_path. Clears whatever was
-    previously downloaded there first."""
+    previously downloaded there first.
+
+    Stops immediately on the first 401/403 (invalid/expired token) instead of
+    repeating the same auth failure for every remaining project id — the
+    rest are recorded as "skipped" rather than "failed"."""
     clear_downloaded_reports(folder_path)
 
     json_headers = {
@@ -101,16 +288,33 @@ def download_reports_from_api(project_ids, token, folder_path):
     file_headers = {"Accept": "*/*", "token": token}
 
     results = []
-    for project_id in project_ids:
+    for i, project_id in enumerate(project_ids):
         try:
             listing_response = requests.post(
                 TASK_LISTING_URL, headers=json_headers,
                 json=_task_listing_payload(project_id), timeout=60
             )
+
+            if listing_response.status_code in (401, 403):
+                results.append({
+                    "project_id": project_id, "status": "failed",
+                    "message": "Token invalid or expired — update KUALITEE_API_TOKEN in .env",
+                })
+                for skipped_id in project_ids[i + 1:]:
+                    results.append({
+                        "project_id": skipped_id, "status": "skipped",
+                        "message": "Not attempted — stopped after token failure above",
+                    })
+                break
+
             listing_response.raise_for_status()
             export_link = listing_response.json().get("link")
             if not export_link:
-                raise ValueError("Response did not include an export link")
+                results.append({
+                    "project_id": project_id, "status": "failed",
+                    "message": "No export link returned — check the project id is correct",
+                })
+                continue
 
             file_response = requests.get(export_link, headers=file_headers, timeout=60)
             file_response.raise_for_status()
@@ -118,9 +322,12 @@ def download_reports_from_api(project_ids, token, folder_path):
             filename = os.path.basename(export_link)
             with open(os.path.join(folder_path, filename), "wb") as f:
                 f.write(file_response.content)
-            results.append((project_id, True, filename))
+            results.append({"project_id": project_id, "status": "success", "message": filename})
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else "?"
+            results.append({"project_id": project_id, "status": "failed", "message": f"HTTP {status} error"})
         except Exception as e:
-            results.append((project_id, False, str(e)))
+            results.append({"project_id": project_id, "status": "failed", "message": str(e)})
     return results
 
 @st.cache_data(ttl=3600)
@@ -386,26 +593,65 @@ def build_html_report(filtered_df, project_breakdown, lw_proj, sum1, sum2, sum3,
 </html>"""
 
 
+# --- AUTHENTICATION ---
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    render_login_page()
+    st.stop()
+
+st.sidebar.success(f"Logged in as **{st.session_state.username}** ({st.session_state.role})")
+if st.sidebar.button("Logout"):
+    for key in ("authenticated", "username", "role", "project"):
+        st.session_state.pop(key, None)
+    st.rerun()
+st.sidebar.markdown("---")
+
 # Load the data
 df, project_assigned_users = load_data(SOURCE_FOLDER)
 
-# --- REFRESH REPORTS FROM API ---
-st.sidebar.subheader("🔄 Refresh Data")
-if st.sidebar.button("Download Latest Reports from API"):
-    api_token = os.environ.get(API_TOKEN_ENV_VAR)
-    if not api_token:
-        st.sidebar.error(f"Set the {API_TOKEN_ENV_VAR} environment variable before downloading.")
-    else:
-        with st.spinner(f"Downloading reports for {len(PROJECT_IDS)} project(s)..."):
-            download_results = download_reports_from_api(PROJECT_IDS, api_token, SOURCE_FOLDER)
-        for project_id, success, info in download_results:
-            if success:
-                st.sidebar.success(f"Project {project_id}: downloaded {info}")
-            else:
-                st.sidebar.error(f"Project {project_id}: failed — {info}")
-        load_data.clear()
+# --- REFRESH REPORTS FROM API (admin only — leads can't trigger fetches) ---
+if st.session_state.role == 'admin':
+    st.sidebar.subheader("🔄 Refresh Data")
+    if st.sidebar.button("Download Latest Reports from API"):
+        api_token = os.environ.get(API_TOKEN_ENV_VAR)
+        if not api_token:
+            st.session_state.download_results = [{
+                "project_id": "-", "status": "failed",
+                "message": f"{API_TOKEN_ENV_VAR} is not set — add it to .env first.",
+            }]
+        else:
+            with st.spinner(f"Downloading reports for {len(PROJECT_IDS)} project(s)..."):
+                st.session_state.download_results = download_reports_from_api(PROJECT_IDS, api_token, SOURCE_FOLDER)
+            load_data.clear()
+        st.session_state.download_at = datetime.now()
         st.rerun()
-st.sidebar.markdown("---")
+
+    # Persistent panel — survives the st.rerun() above (unlike st.sidebar.success/
+    # error, which would be wiped before they're ever seen) and stays visible
+    # until the next download attempt.
+    if "download_results" in st.session_state:
+        results = st.session_state.download_results
+        n_success = sum(1 for r in results if r["status"] == "success")
+        n_failed = sum(1 for r in results if r["status"] == "failed")
+        n_skipped = sum(1 for r in results if r["status"] == "skipped")
+
+        summary = f"{n_success} succeeded"
+        if n_failed:
+            summary += f", {n_failed} failed"
+        if n_skipped:
+            summary += f", {n_skipped} skipped"
+
+        with st.sidebar.expander(
+            f"📋 Last download ({st.session_state.download_at.strftime('%d %b %Y, %I:%M %p')}): {summary}",
+            expanded=bool(n_failed or n_skipped),
+        ):
+            icons = {"success": "✅", "failed": "❌", "skipped": "⏭️"}
+            for r in results:
+                st.write(f"{icons[r['status']]} **{r['project_id']}** — {r['message']}")
+
+    st.sidebar.markdown("---")
 
 if df.empty:
     st.title("📊 Teams Productivity Dashboard")
@@ -433,11 +679,21 @@ else:
     else:
         period_label = "Selected Period"
 
-    project_list = sorted(df['Project Name'].unique())
-    selected_projects = st.sidebar.multiselect("Select Projects", project_list, default=project_list)
+    full_project_list = sorted(df['Project Name'].unique())
+
+    if st.session_state.role == 'admin':
+        project_list = full_project_list
+        selected_projects = st.sidebar.multiselect("Select Projects", project_list, default=project_list)
+    else:
+        # Project leads are locked to their one assigned project — no picker shown.
+        project_list = [p for p in full_project_list if p == st.session_state.project]
+        selected_projects = project_list
+        st.sidebar.markdown(f"**Project:** {st.session_state.project}")
+        if not project_list:
+            st.sidebar.warning(f"No data found yet for '{st.session_state.project}'.")
 
     single_project_selected = len(selected_projects) == 1
-    if not selected_projects or set(selected_projects) == set(project_list):
+    if not selected_projects or set(selected_projects) == set(full_project_list):
         st.title("📊 Teams Productivity Dashboard")
     elif single_project_selected:
         st.title(f"📊 {selected_projects[0]} Team Productivity Dashboard")
@@ -449,7 +705,7 @@ else:
     # Fixed color per project (identity), stable regardless of filter/selection
     project_color_map = {
         proj: CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
-        for i, proj in enumerate(project_list)
+        for i, proj in enumerate(full_project_list)
     }
 
     # NEW: Module Filter
@@ -736,7 +992,7 @@ else:
                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     if st.sidebar.button("Generate HTML Report"):
-        if set(selected_projects) == set(project_list):
+        if set(selected_projects) == set(full_project_list):
             report_label = "All_Projects"
         elif len(selected_projects) == 1:
             report_label = selected_projects[0]
@@ -760,7 +1016,7 @@ else:
                   'avg_hrs_member': avg_hrs_member,
                   'top_activity': top_activity,
                   'top_activity_hrs': top_activity_hrs},
-            filt={'projects': selected_projects, 'all_projects': project_list,
+            filt={'projects': selected_projects, 'all_projects': full_project_list,
                   'modules': selected_modules, 'all_modules': module_list, 'members': selected_users,
                   'period_label': period_label, 'capacity_hours': capacity_hours,
                   'generated_at': datetime.now()},
